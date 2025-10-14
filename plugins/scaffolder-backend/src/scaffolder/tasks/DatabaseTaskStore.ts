@@ -431,7 +431,8 @@ export class DatabaseTaskStore implements TaskStore {
 
   async heartbeatTask(taskId: string): Promise<void> {
     const updateCount = await this.db<RawDbTaskRow>('tasks')
-      .where({ id: taskId, status: 'processing' })
+      .whereIn('status', ['processing', 'waiting'])
+      .where({ id: taskId })
       .update({
         last_heartbeat_at: this.db.fn.now(),
       });
@@ -576,7 +577,23 @@ export class DatabaseTaskStore implements TaskStore {
     state?: JsonObject;
   }): Promise<void> {
     if (options.state) {
-      const serializedState = JSON.stringify({ state: options.state });
+      // Read existing state and merge with new state to preserve other properties
+      const [existingTask] = await this.db<RawDbTaskRow>('tasks')
+        .where({ id: options.taskId })
+        .select('state');
+
+      const existingState = existingTask?.state
+        ? JSON.parse(existingTask.state)
+        : {};
+      const currentState = existingState.state || {};
+
+      // Merge the new state with existing state
+      const mergedState = {
+        ...currentState,
+        ...options.state,
+      };
+
+      const serializedState = JSON.stringify({ state: mergedState });
       await this.db<RawDbTaskRow>('tasks')
         .where({ id: options.taskId })
         .update({
@@ -812,5 +829,137 @@ export class DatabaseTaskStore implements TaskStore {
     });
 
     return { ids: taskIdsToRecover };
+  }
+
+  async pauseTask(options: {
+    taskId: string;
+    reason?: string;
+    metadata?: JsonObject;
+  }): Promise<void> {
+    const { taskId, reason, metadata } = options;
+
+    await this.db.transaction(async tx => {
+      const [task] = await tx<RawDbTaskRow>('tasks')
+        .where({ id: taskId, status: 'processing' })
+        .select();
+
+      if (!task) {
+        throw new ConflictError(
+          `Cannot pause task ${taskId}: task not found or not in processing state`,
+        );
+      }
+
+      // Get current state and update with pause metadata
+      const parsedState = task.state ? JSON.parse(task.state) : {};
+      const currentState = parsedState.state || parsedState; // Handle both wrapped and unwrapped formats
+      const updatedState = {
+        ...currentState,
+        paused: true,
+        pausedStepId: metadata?.stepId,
+        pauseMetadata: metadata,
+      };
+
+      // Debug logging
+      console.log(
+        `[GATED] Pause task ${taskId}: Saving pausedStepId=${
+          metadata?.stepId
+        }, metadata=${JSON.stringify(metadata)}`,
+      );
+
+      await tx<RawDbTaskRow>('tasks')
+        .where({ id: taskId })
+        .update({
+          status: 'waiting',
+          state: JSON.stringify({ state: updatedState }),
+          last_heartbeat_at: this.db.fn.now(),
+        });
+
+      const eventBody = {
+        message: reason || 'Task paused and waiting for external event',
+        ...(metadata && { metadata }),
+      };
+
+      await tx<RawDbTaskEventRow>('task_events').insert({
+        task_id: taskId,
+        event_type: 'log',
+        body: JSON.stringify(eventBody),
+      });
+
+      this.events?.publish({
+        topic: 'scaffolder.task',
+        eventPayload: {
+          id: taskId,
+          status: 'waiting',
+          lastHeartbeatAt: task.last_heartbeat_at,
+          createdAt: task.created_at,
+          createdBy: task.created_by,
+          state: updatedState,
+        },
+      });
+    });
+  }
+
+  async resumeTask(options: { taskId: string }): Promise<void> {
+    const { taskId } = options;
+
+    await this.db.transaction(async tx => {
+      const [task] = await tx<RawDbTaskRow>('tasks')
+        .where({ id: taskId, status: 'waiting' })
+        .select();
+
+      if (!task) {
+        throw new ConflictError(
+          `Cannot resume task ${taskId}: task not found or not in waiting state`,
+        );
+      }
+
+      // Update state to indicate resumption and which step to continue from
+      const parsedState = task.state ? JSON.parse(task.state) : {};
+      const currentState = parsedState.state || parsedState; // Handle both wrapped and unwrapped formats
+
+      // Debug logging
+      console.log(
+        `[GATED] Resume task ${taskId}: currentState.pausedStepId=${currentState.pausedStepId}, paused=${currentState.paused}`,
+      );
+
+      const updatedState = {
+        ...currentState,
+        paused: false,
+        resumed: true,
+        resumedFrom: currentState.pausedStepId,
+      };
+
+      console.log(
+        `[GATED] Resume task ${taskId}: Setting resumedFrom=${updatedState.resumedFrom}`,
+      );
+
+      await tx<RawDbTaskRow>('tasks')
+        .where({ id: taskId })
+        .update({
+          status: 'open',
+          state: JSON.stringify({ state: updatedState }),
+          last_heartbeat_at: this.db.fn.now(),
+        });
+
+      await tx<RawDbTaskEventRow>('task_events').insert({
+        task_id: taskId,
+        event_type: 'log',
+        body: JSON.stringify({
+          message: 'Task resumed from waiting state',
+        }),
+      });
+
+      this.events?.publish({
+        topic: 'scaffolder.task',
+        eventPayload: {
+          id: taskId,
+          status: 'open',
+          lastHeartbeatAt: task.last_heartbeat_at,
+          createdAt: task.created_at,
+          createdBy: task.created_by,
+          state: this.getState(task),
+        },
+      });
+    });
   }
 }

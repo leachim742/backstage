@@ -18,3 +18,4 @@ export * from './catalog';
 export * from './debug';
 export * from './fetch';
 export * from './filesystem';
+export * from './gated';

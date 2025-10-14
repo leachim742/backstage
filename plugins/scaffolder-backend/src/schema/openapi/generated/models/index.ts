@@ -41,6 +41,7 @@ export * from '../models/ListTasksResponse.model';
 export * from '../models/ListTemplatingExtensionsResponse.model';
 export * from '../models/ListTemplatingExtensionsResponseGlobals.model';
 export * from '../models/ModelError.model';
+export * from '../models/ResumeTask200Response.model';
 export * from '../models/RetryRequest.model';
 export * from '../models/Scaffold201Response.model';
 export * from '../models/Scaffold400Response.model';

@@ -89,6 +89,8 @@ import {
   DatabaseTaskStore,
   TaskWorker,
   TemplateActionRegistry,
+  createWaitForApprovalAction,
+  createWaitForPullRequestAction,
 } from '../scaffolder';
 import { createDryRunner } from '../scaffolder/dryrun';
 import { StorageTaskBroker } from '../scaffolder/tasks/StorageTaskBroker';
@@ -227,11 +229,13 @@ export async function createRouter(
   const integrations = ScmIntegrations.fromConfig(config);
 
   let taskBroker: TaskBroker;
+  let taskStore: DatabaseTaskStore | undefined;
   if (!options.taskBroker) {
     const databaseTaskStore = await DatabaseTaskStore.create({
       database,
       events: eventsService,
     });
+    taskStore = databaseTaskStore;
     taskBroker = new StorageTaskBroker(
       databaseTaskStore,
       logger,
@@ -318,6 +322,15 @@ export async function createRouter(
 
   for (const action of actions) {
     actionRegistry.register(action);
+  }
+
+  // Register gated workflow actions if taskStore is available
+  if (taskStore) {
+    actionRegistry.register(createWaitForApprovalAction({ taskStore }));
+    actionRegistry.register(createWaitForPullRequestAction({ taskStore }));
+    logger.info(
+      'Registered gated workflow actions: gated:waitForApproval, gated:waitForPullRequest',
+    );
   }
 
   for (const action of distributedActions) {
@@ -799,6 +812,78 @@ export async function createRouter(
 
         await taskBroker.retry?.({ secrets, taskId });
         res.status(201).json({ id: taskId });
+      } catch (err) {
+        await auditorEvent?.fail({ error: err });
+        throw err;
+      }
+    })
+    .post('/v2/tasks/:taskId/resume', async (req, res) => {
+      const { taskId } = req.params;
+
+      const auditorEvent = await auditor?.createEvent({
+        eventId: 'task',
+        severityLevel: 'medium',
+        request: req,
+        meta: {
+          actionType: 'resume',
+          taskId: taskId,
+        },
+      });
+
+      try {
+        const credentials = await httpAuth.credentials(req);
+        const task = await taskBroker.get(taskId);
+
+        // Check if task is in waiting state
+        if (task.status !== 'waiting') {
+          throw new InputError(
+            `Task ${taskId} is not in waiting state. Current status: ${task.status}`,
+          );
+        }
+
+        // Requires both read and create permissions
+        await checkPermission({
+          credentials,
+          permissions: [taskCreatePermission],
+          permissionService: permissions,
+        });
+
+        await checkTaskPermission({
+          credentials,
+          permissions: [taskReadPermission],
+          permissionService: permissions,
+          task: task,
+          isTaskAuthorized,
+        });
+
+        // Resume the task
+        if (!taskStore) {
+          throw new Error(
+            'Task store is not available. Resume functionality requires the default task store implementation.',
+          );
+        }
+
+        if (!taskStore.resumeTask) {
+          throw new Error('resumeTask is not available on taskStore');
+        }
+
+        await taskStore.resumeTask({ taskId });
+
+        // Notify the task broker that there's a new task ready to be claimed
+        // This is needed because the broker might be waiting and needs to wake up
+        if (
+          'signalDispatch' in taskBroker &&
+          typeof (taskBroker as any).signalDispatch === 'function'
+        ) {
+          (taskBroker as any).signalDispatch();
+        }
+
+        await auditorEvent?.success();
+        res.status(200).json({
+          id: taskId,
+          status: 'resumed',
+          message: 'Task resumed successfully and will continue execution',
+        });
       } catch (err) {
         await auditorEvent?.fail({ error: err });
         throw err;

@@ -149,7 +149,12 @@ export class TaskManager implements TaskContext {
     const { key, ...value } = options;
 
     if (this.task.state) {
-      (this.task.state as TaskState).checkpoints[key] = value;
+      const taskState = this.task.state as TaskState;
+      // Initialize checkpoints object if it doesn't exist
+      if (!taskState.checkpoints) {
+        taskState.checkpoints = {};
+      }
+      taskState.checkpoints[key] = value;
     } else {
       this.task.state = { checkpoints: { [key]: value } };
     }

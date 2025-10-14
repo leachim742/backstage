@@ -1,0 +1,115 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: gated-workflow-demo
+  title: Gated Workflow Demo
+  description: |
+    An example template demonstrating gated scaffolder workflows that can pause
+    and wait for external events like PR merges or manual approvals.
+  tags:
+    - experimental
+    - gated-workflow
+    - demo
+spec:
+  owner: backstage/techdocs-core
+  type: service
+
+  parameters:
+    - title: Component Information
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Name
+          type: string
+          description: Unique name of the component
+          ui:autofocus: true
+          ui:options:
+            rows: 5
+        owner:
+          title: Owner
+          type: string
+          description: Owner of the component
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+    - title: Repository Information  
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base
+      action: fetch:template
+      input:
+        url: ./content
+        values:
+          name: ${{ parameters.name }}
+          owner: ${{ parameters.owner }}
+
+    - id: create-pr
+      name: Create Pull Request
+      action: publish:github:pull-request
+      input:
+        repoUrl: ${{ parameters.repoUrl }}
+        branchName: add-${{ parameters.name }}
+        title: 'feat: Add ${{ parameters.name }} component'
+        description: |
+          This PR adds a new component: ${{ parameters.name }}
+          
+          This is part of an automated scaffolder workflow.
+          Please review and merge to continue the workflow.
+
+    - id: wait-for-pr-merge
+      name: Wait for PR to be Merged
+      action: gated:waitForPullRequest
+      input:
+        prUrl: ${{ steps['create-pr'].output.remoteUrl }}
+        provider: github
+
+    - id: register-component
+      name: Register Component in Catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['create-pr'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+    - id: wait-for-approval
+      name: Wait for Deployment Approval
+      action: gated:waitForApproval
+      input:
+        reason: 'Waiting for approval to deploy to production'
+        approvers:
+          - ${{ parameters.owner }}
+        metadata:
+          componentName: ${{ parameters.name }}
+          environment: production
+
+    - id: deploy
+      name: Deploy to Production
+      action: debug:log
+      input:
+        message: |
+          Deploying ${{ parameters.name }} to production...
+          This would trigger actual deployment in a real scenario.
+
+  output:
+    links:
+      - title: Pull Request
+        url: ${{ steps['create-pr'].output.remoteUrl }}
+      - title: Repository
+        url: ${{ steps['create-pr'].output.repoUrl }}
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register-component'].output.entityRef }}

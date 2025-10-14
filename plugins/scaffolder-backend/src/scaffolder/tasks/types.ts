@@ -154,6 +154,14 @@ export interface TaskStore {
     path: string;
     taskId: string;
   }): Promise<void>;
+
+  pauseTask?(options: {
+    taskId: string;
+    reason?: string;
+    metadata?: JsonObject;
+  }): Promise<void>;
+
+  resumeTask?(options: { taskId: string }): Promise<void>;
 }
 
 export type WorkflowResponse = { output: { [key: string]: JsonValue } };

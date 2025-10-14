@@ -15,6 +15,7 @@
  */
 
 import { InputError, NotAllowedError, stringifyError } from '@backstage/errors';
+import { WorkflowPausedError } from '../errors';
 import { ScmIntegrations } from '@backstage/integration';
 import {
   TaskRecovery,
@@ -460,6 +461,25 @@ export class NunjucksWorkflowRunner implements WorkflowRunner {
 
       await stepTrack.markSuccessful();
     } catch (err) {
+      // Don't mark as failed if this is a workflow pause
+      if (err instanceof WorkflowPausedError) {
+        // Save step outputs to task state before pausing
+        const currentState = await task.getTaskState?.();
+        task.updateCheckpoint?.({
+          key: 'workflow.stepOutputs',
+          status: 'success',
+          value: context.steps,
+        });
+
+        this.options.logger.info(
+          `Saved step outputs before pausing: ${Object.keys(context.steps).join(
+            ', ',
+          )}`,
+        );
+
+        // Let the error propagate to TaskWorker without marking as failed
+        throw err;
+      }
       await taskTrack.markFailed(step, err);
       await stepTrack.markFailed();
       throw err;
@@ -514,7 +534,62 @@ export class NunjucksWorkflowRunner implements WorkflowRunner {
             )
           : [{ result: AuthorizeResult.ALLOW }];
 
+      // Check if this is a resumed task and restore previous step outputs
+      const taskState = await task.getTaskState?.();
+      const resumedFrom = taskState?.state?.resumedFrom;
+
+      this.options.logger.info(
+        `Task state on execute: resumed=${taskState?.state?.resumed}, resumedFrom=${resumedFrom}, paused=${taskState?.state?.paused}`,
+      );
+
+      // Restore previous step outputs from checkpoints
+      const checkpointKey =
+        'v1.task.checkpoint.workflow.stepOutputs.workflow.stepOutputs';
+      const previousStepOutputs = (taskState?.state?.checkpoints as any)?.[
+        checkpointKey
+      ]?.value as Record<string, any>;
+
+      if (previousStepOutputs && Object.keys(previousStepOutputs).length > 0) {
+        this.options.logger.info(
+          `Restoring step outputs from paused task: ${Object.keys(
+            previousStepOutputs,
+          ).join(', ')}`,
+        );
+        context.steps = previousStepOutputs;
+      }
+
+      let foundResumePoint = !resumedFrom; // If no resume point, start from beginning
+
+      this.options.logger.info(
+        `Starting workflow execution. foundResumePoint=${foundResumePoint}, resumedFrom=${resumedFrom}`,
+      );
+
       for (const step of task.spec.steps) {
+        // Skip steps that were already completed before pause
+        if (!foundResumePoint) {
+          this.options.logger.info(
+            `Checking step: ${step.id} against resumedFrom: ${resumedFrom}`,
+          );
+
+          if (step.id === resumedFrom) {
+            foundResumePoint = true;
+            this.options.logger.info(
+              `Found resume point! Resuming workflow after step: ${
+                step.id || step.name
+              }`,
+            );
+            // Skip the step that caused the pause, continue from next
+            continue;
+          }
+          // Skip this step - it was already completed
+          this.options.logger.info(
+            `Skipping already completed step: ${step.id || step.name}`,
+          );
+          continue;
+        }
+
+        this.options.logger.info(`Executing step: ${step.id || step.name}`);
+
         await this.executeStep(
           task,
           step,

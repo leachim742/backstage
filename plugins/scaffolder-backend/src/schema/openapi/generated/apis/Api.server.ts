@@ -28,6 +28,7 @@ import { DryRun200Response } from '../models/DryRun200Response.model';
 import { DryRunRequest } from '../models/DryRunRequest.model';
 import { ListTasksResponse } from '../models/ListTasksResponse.model';
 import { ListTemplatingExtensionsResponse } from '../models/ListTemplatingExtensionsResponse.model';
+import { ResumeTask200Response } from '../models/ResumeTask200Response.model';
 import { RetryRequest } from '../models/RetryRequest.model';
 import { Scaffold201Response } from '../models/Scaffold201Response.model';
 import { Scaffold400Response } from '../models/Scaffold400Response.model';
@@ -111,6 +112,15 @@ export type ListTemplatingExtensions = {
 /**
  * @public
  */
+export type ResumeTask = {
+  path: {
+    taskId: string;
+  };
+  response: ResumeTask200Response | Error;
+};
+/**
+ * @public
+ */
 export type Retry = {
   path: {
     taskId: string;
@@ -154,6 +164,8 @@ export type EndpointMap = {
   '#get|/v2/tasks': ListTasks;
 
   '#get|/v2/templating-extensions': ListTemplatingExtensions;
+
+  '#post|/v2/tasks/{taskId}/resume': ResumeTask;
 
   '#post|/v2/tasks/{taskId}/retry': Retry;
 

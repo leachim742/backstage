@@ -8,67 +8,40 @@ spec:
   owner: backstage/techdocs-core
   type: service
   parameters:
-    - title: Notification
+    - title: Fill in some steps
       required:
-        - recipients
-        - title
+        - name
       properties:
-        recipients:
-          title: Recipients
+        name:
+          title: Name
           type: string
-          description: Notification recipients
-          default: entity
-          enum:
-            - entity
-            - broadcast
-        entityRefs:
-          title: Entities
-          type: array
-          description: Entities to send the notification. Required if recipients is entity
-          ui:field: MultiEntityPicker
+          description: Unique name of the component
+        owner:
+          title: Owner
+          type: string
+          description: Owner of the component
+          ui:field: OwnerPicker
           ui:options:
-            defaultNamespace: default
-        title:
-          title: Title
-          type: string
-          description: Notification title
-        info:
-          title: Description
-          type: string
-          description: Notification longer description
-        link:
-          title: Link
-          type: string
-          description: Notification link
-        severity:
-          title: Severity
-          type: string
-          description: Notification severity
-          default: normal
-          enum:
-            - low
-            - normal
-            - high
-            - critical
-        topic:
-          title: Topic
-          type: string
-          description: Notification topic
-        scope:
-          title: Scope
-          type: string
-          description: Notification scope
-
+            catalogFilter:
+              kind: Group
   steps:
-    - id: send-notification
-      name: Send notification
-      action: notification:send
+    - action: debug:log
+      id: debug-log
+      name: Log Hello World
       input:
-        recipients: ${{ parameters.recipients }}
-        entityRefs: ${{ parameters.entityRefs }}
-        title: ${{ parameters.title }}
-        info: ${{ parameters.info }}
-        link: ${{ parameters.link }}
-        severity: ${{ parameters.severity }}
-        topic: ${{ parameters.topic }}
-        scope: ${{ parameters.scope }}
+        message: 'Hello, World!'
+      
+    - id: wait-approval
+      name: Wait for Production Deployment Approval
+      action: gated:waitForApproval
+      input:
+        reason: 'Approval required for production deployment'
+        approvers:
+          - user:development/guest
+
+          
+    - action: debug:log
+      id: debug-log2
+      name: Log Hello Worldd
+      input:
+        message: 'Hello, World!!!!'

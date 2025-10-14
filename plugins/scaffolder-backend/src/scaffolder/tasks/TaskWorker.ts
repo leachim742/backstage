@@ -16,6 +16,7 @@
 
 import { AuditorService, LoggerService } from '@backstage/backend-plugin-api';
 import { assertError, InputError, stringifyError } from '@backstage/errors';
+import { WorkflowPausedError } from '../errors';
 import { ScmIntegrations } from '@backstage/integration';
 import { PermissionEvaluator } from '@backstage/plugin-permission-common';
 import {
@@ -219,6 +220,20 @@ export class TaskWorker {
       await auditorEvent?.success();
     } catch (error) {
       assertError(error);
+
+      // Handle workflow pause - this is not an error, task should remain in waiting state
+      if (error instanceof WorkflowPausedError) {
+        this.logger?.info(
+          `Task ${
+            task.spec.templateInfo?.entity?.metadata.name || task.taskId
+          } paused: ${error.message}`,
+        );
+        await auditorEvent?.success();
+        // Task is already in 'waiting' state from pauseTask call, don't change it
+        return;
+      }
+
+      // Handle actual errors
       await auditorEvent?.fail({
         error,
       });

@@ -565,6 +565,7 @@ export const spec = {
           'open',
           'processing',
           'skipped',
+          'waiting',
         ],
         description: 'The status of each step of the Task',
       },
@@ -1021,6 +1022,50 @@ export const spec = {
                 },
               },
             },
+          },
+        },
+        security: [
+          {},
+          {
+            JWT: [],
+          },
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/taskId',
+          },
+        ],
+      },
+    },
+    '/v2/tasks/{taskId}/resume': {
+      post: {
+        operationId: 'ResumeTask',
+        description: 'Resumes a task that is in waiting state.',
+        responses: {
+          '200': {
+            description: 'Ok',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    id: {
+                      type: 'string',
+                    },
+                    status: {
+                      type: 'string',
+                    },
+                    message: {
+                      type: 'string',
+                    },
+                  },
+                  required: ['id', 'status'],
+                },
+              },
+            },
+          },
+          '400': {
+            $ref: '#/components/responses/ErrorResponse',
           },
         },
         security: [
